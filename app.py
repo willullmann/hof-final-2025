@@ -2,7 +2,7 @@ import streamlit as st
 from docx import Document
 from io import BytesIO
 import os
-from datetime import date
+from datetime import datetime, timedelta, timezone  # <--- MUDANÇA AQUI
 import time
 
 # --- 1. CONFIGURAÇÃO ---
@@ -25,6 +25,8 @@ def check_password():
             if usuario in USUARIOS_PERMITIDOS and USUARIOS_PERMITIDOS[usuario] == senha:
                 st.session_state['password_correct'] = True
                 st.session_state['usuario_atual'] = usuario
+                st.success("Login Autorizado!")
+                time.sleep(0.5)
                 st.rerun()
             else: st.error("❌ Acesso Negado")
     return False
@@ -44,13 +46,12 @@ MAPA_ARQUIVOS = {
     "Peeling": "peeling"
 }
 
-# --- 4. FUNÇÕES MELHORADAS ---
+# --- 4. FUNÇÕES ---
 
 def formatar_real(valor):
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def converter_numero_texto(dias):
-    """Agora cobre todos os dias do mês!"""
     numeros = {
         0: "zero", 1: "um", 2: "dois", 3: "três", 4: "quatro", 5: "cinco", 
         6: "seis", 7: "sete", 8: "oito", 9: "nove", 10: "dez",
@@ -63,24 +64,16 @@ def converter_numero_texto(dias):
     return numeros.get(dias, str(dias))
 
 def substituir_no_paragrafo(paragrafo, refs):
-    """
-    Função Cirúrgica: Tenta substituir mantendo a formatação original (Negrito, Tamanho, etc).
-    """
-    if not paragrafo.text:
-        return
-
+    """Substitui mantendo a formatação original"""
+    if not paragrafo.text: return
     for key, value in refs.items():
         if key in paragrafo.text:
-            # Tentativa 1: Substituir dentro do "Run" (pedaço formatado) para manter o estilo
-            substituiu_com_estilo = False
+            substituiu = False
             for run in paragrafo.runs:
                 if key in run.text:
                     run.text = run.text.replace(key, value)
-                    substituiu_com_estilo = True
-            
-            # Tentativa 2: Se a etiqueta estiver "quebrada" pelo Word, faz a substituição bruta
-            # (Isso corrige o erro de não substituir, mas pode perder formatação específica)
-            if not substituiu_com_estilo:
+                    substituiu = True
+            if not substituiu:
                 paragrafo.text = paragrafo.text.replace(key, value)
 
 def preencher_template(caminho, dados):
@@ -90,7 +83,10 @@ def preencher_template(caminho, dados):
     val_cheio = formatar_real(dados.get('valor_cheio', 0))
     val_desc = formatar_real(dados.get('valor_desconto', 0))
     val_final = formatar_real(dados.get('valor_final', 0))
-    data_hoje = date.today().strftime("%d/%m/%Y")
+    
+    # --- CORREÇÃO DO FUSO HORÁRIO (BRASIL -3h) ---
+    fuso_brasil = timezone(timedelta(hours=-3))
+    data_hoje = datetime.now(fuso_brasil).strftime("%d/%m/%Y")
     
     cid_valor = dados.get('cid', "")
     texto_cid_final = f"CID: {cid_valor}" if cid_valor else ""
@@ -114,11 +110,11 @@ def preencher_template(caminho, dados):
         "{{CID}}": texto_cid_final
     }
     
-    # 1. Substitui no texto corrido
+    # Substitui Texto Corrido
     for p in doc.paragraphs:
         substituir_no_paragrafo(p, refs)
         
-    # 2. Substitui dentro de TABELAS (Correção para Contratos/Fichas)
+    # Substitui Tabelas
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -170,7 +166,6 @@ txt_clausula, txt_receita = "", ""
 if docs:
     st.subheader("📝 Preenchimento")
     
-    # Lógica Financeira
     if any(d in docs for d in ["Contrato de Serviço", "Recibo de Pagamento", "Orçamento"]):
         st.info("💰 Financeiro")
         c1, c2, c3 = st.columns(3)
@@ -182,7 +177,6 @@ if docs:
         if valor_desconto > 0:
             txt_clausula = f"Desconto de imagem: R$ {formatar_real(valor_desconto)}."
 
-    # Receita
     if "Receituário" in docs:
         st.info("💊 Receituário")
         if 'lista_meds' not in st.session_state: st.session_state.lista_meds = []
@@ -194,7 +188,6 @@ if docs:
             txt_receita += f"{i+1}. {m}\n"
         if st.button("Limpar"): st.session_state.lista_meds = []
 
-    # Atestado
     if "Atestado Médico" in docs:
         st.info("crm Atestado")
         dias = st.number_input("Dias", 1)
@@ -216,7 +209,6 @@ if docs:
             }
             st.success("Arquivos gerados! Baixe abaixo:")
 
-            # Lista Geral
             gerais = {
                 "Contrato de Serviço": "contrato_orofacial.docx",
                 "Orçamento": "orcamento.docx",
@@ -235,7 +227,6 @@ if docs:
                     if arq: st.download_button(f"📥 {doc_nome}", arq, f"{doc_nome}_{nome}.docx")
                     else: st.warning(f"⚠️ Faltou: templates/{arquivo_real}")
 
-            # Lista Específicos
             if "Termos de Consentimento (Específicos)" in docs:
                 for proc in procs:
                     sufixo = MAPA_ARQUIVOS.get(proc)
