@@ -2,7 +2,7 @@ import streamlit as st
 from docx import Document
 from io import BytesIO
 import os
-from datetime import datetime, timedelta, timezone  # <--- MUDANÇA AQUI
+from datetime import datetime, timedelta, timezone
 import time
 
 # --- 1. CONFIGURAÇÃO ---
@@ -80,41 +80,62 @@ def preencher_template(caminho, dados):
     if not os.path.exists(caminho): return None
     doc = Document(caminho)
     
+    # Valores básicos
     val_cheio = formatar_real(dados.get('valor_cheio', 0))
     val_desc = formatar_real(dados.get('valor_desconto', 0))
     val_final = formatar_real(dados.get('valor_final', 0))
     
-    # --- CORREÇÃO DO FUSO HORÁRIO (BRASIL -3h) ---
+    # Fuso Horário Brasil
     fuso_brasil = timezone(timedelta(hours=-3))
     data_hoje = datetime.now(fuso_brasil).strftime("%d/%m/%Y")
     
+    # --- LÓGICA INTELIGENTE (Tipo CID) ---
+    
+    # 1. CID (Se vazio, some)
     cid_valor = dados.get('cid', "")
     texto_cid_final = f"CID: {cid_valor}" if cid_valor else ""
     
+    # 2. Orçamento Valor (Se for 0, some tudo. Se > 0, mostra label + valor)
+    raw_final = dados.get('valor_final', 0)
+    smart_orcamento_valor = f"Valor Total: R$ {val_final}" if raw_final > 0 else ""
+    
+    # 3. Orçamento Pagamento (Se vazio, some tudo)
+    pgto_raw = dados.get('pagamento', "")
+    smart_orcamento_pgto = f"Forma de Pagamento: {pgto_raw}" if pgto_raw else ""
+    
     refs = {
+        # Pessoais
         "{{NOME_PACIENTE}}": dados.get('nome', ""),
         "{{RG_PACIENTE}}": dados.get('rg', ""),
         "{{CPF_PACIENTE}}": dados.get('cpf', ""),
         "{{CELULAR_PACIENTE}}": dados.get('celular', ""),
         "{{ENDERECO_PACIENTE}}": dados.get('endereco', ""),
         "{{DATA_HOJE}}": data_hoje,
+        
+        # Procedimentos
         "{{DESCRIÇÃO_PROCEDIMENTOS}}": ", ".join(dados.get('procedimentos', [])),
+        
+        # Financeiro Padrão (Para Contrato/Recibo - Mantém fixo)
         "{{VALOR_CHEIO}}": val_cheio,
         "{{VALOR_DESCONTO}}": val_desc,
         "{{VALOR_FINAL}}": val_final,
         "{{FORMA_PAGAMENTO}}": dados.get('pagamento', ""),
         "{{CLAUSULA_IMAGEM}}": dados.get('clausula_imagem', ""),
+        
+        # Etiquetas INTELIGENTES (Para Orçamento)
+        "{{ORCAMENTO_VALOR}}": smart_orcamento_valor,        # <--- NOVA
+        "{{ORCAMENTO_PAGAMENTO}}": smart_orcamento_pgto,     # <--- NOVA
+        
+        # Médicos
         "{{LISTA_MEDICAMENTOS}}": dados.get('texto_medicamentos', ""),
         "{{DIAS_NUMERO}}": str(dados.get('dias_afastamento', 0)),
         "{{DIAS_EXTENSO}}": dados.get('dias_extenso', ""),
         "{{CID}}": texto_cid_final
     }
     
-    # Substitui Texto Corrido
+    # Varredura Completa (Parágrafos e Tabelas)
     for p in doc.paragraphs:
         substituir_no_paragrafo(p, refs)
-        
-    # Substitui Tabelas
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -166,6 +187,7 @@ txt_clausula, txt_receita = "", ""
 if docs:
     st.subheader("📝 Preenchimento")
     
+    # Financeiro
     if any(d in docs for d in ["Contrato de Serviço", "Recibo de Pagamento", "Orçamento"]):
         st.info("💰 Financeiro")
         c1, c2, c3 = st.columns(3)
@@ -177,6 +199,7 @@ if docs:
         if valor_desconto > 0:
             txt_clausula = f"Desconto de imagem: R$ {formatar_real(valor_desconto)}."
 
+    # Receita
     if "Receituário" in docs:
         st.info("💊 Receituário")
         if 'lista_meds' not in st.session_state: st.session_state.lista_meds = []
@@ -188,6 +211,7 @@ if docs:
             txt_receita += f"{i+1}. {m}\n"
         if st.button("Limpar"): st.session_state.lista_meds = []
 
+    # Atestado
     if "Atestado Médico" in docs:
         st.info("crm Atestado")
         dias = st.number_input("Dias", 1)
